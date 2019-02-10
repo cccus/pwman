@@ -1,6 +1,6 @@
 {
   "name": "pwman",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Cli password manager",
   "main": "pwman.js",
   "scripts": {
@@ -13,6 +13,13 @@
     "crypto",
     "command"
   ],
+  "bin": {
+    "pwman": "./pwman.js"
+  },
   "author": "succc",
-  "license": "ISC"
+  "license": "GPL v3",
+  "dependencies": {
+    "clipboardy": "^1.2.3",
+    "terminal-kit": "^1.26.11"
+  }
 }

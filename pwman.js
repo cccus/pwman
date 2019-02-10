@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 /*
 Copyright (C) 2019  Josef Neiß
 
@@ -15,33 +16,59 @@ You should have received a copy of the GNU General Public License
 along with this program.  If not, see <http://www.gnu.org/licenses/>
 */
 
-const crypto = require("crypto")
+const crypto = require('crypto')
 const clipboardy = require('clipboardy')
 const fs = require('fs')
 const term = require( 'terminal-kit' ).terminal
+const CONFIGPATH ='config.json'
 
-var config = {items: [],master: null,copyToClipboard: true}
+var config = {items: [],master: null,copyToClipboard: true,hideInConsole: false,hideMaster: true}
 var enableMenu = false
 var master = null
 
 class Item {
-    constructor(alias,data,password,){
+    constructor(alias,data,password){
         this.alias = alias;
-        this.data = encrypt(data, password);;
+        this.data = encrypt(data, password);
     }
 }
 
+function resetConfig(){
+    term('Create a backup? [y/n]\n')
+    term.yesOrNo((err,res)=>{
+        if(res){
+            var backupPath = Date.now().toString()+CONFIGPATH
+            fs.copyFileSync(CONFIGPATH,backupPath)
+            term(`\nBackup created in ${process.cwd()}/${backupPath}\n`)
+        }
+        fs.unlinkSync(CONFIGPATH)
+        term('pwman resetted.\n')
+        terminate()
+    })
+    
+}
+
 function saveConfig(){
-    fs.writeFileSync('config.json',JSON.stringify(config))
+    fs.writeFileSync(CONFIGPATH,JSON.stringify(config))
 }
 
 function loadConfig(){
-    if(fs.existsSync('config.json')){
-        config = JSON.parse(fs.readFileSync('config.json'))
+    if(fs.existsSync(CONFIGPATH)){
+        config = JSON.parse(fs.readFileSync(CONFIGPATH))
     }else{
         saveConfig()
     }
 }
+
+function editConfig(){
+    term.singleColumnMenu(Object.keys(config),{y:0},(err,res)=>{
+        term.inputField({default: config[res.selectedText]},(err,val)=>{
+            config[res.selectedText] = val
+            saveConfig()
+        })
+    })
+}
+
 
 function generatePassword(length){
     var pass = ""
@@ -84,9 +111,22 @@ loadConfig()
 term.grabInput( { mouse: 'button' } ) ;
 term.clear()
 
-function checkMaster(){
+function validateMaster(input){
+    try{
+        if(input == decrypt(config.master,input)){
+            master = input
+            menu()
+            return true
+        }
+    }catch(e){
+        return false
+    }
+    return false
+}
+
+function inputMaster(){
     term('Master password: ')
-    term.inputField((err,input)=>{
+    term.inputField({echoChar: '#'},(err,input)=>{
         term.clear()
         
         if(config.master == null){
@@ -94,13 +134,8 @@ function checkMaster(){
             saveConfig()
         }
         
-        try{
-            if(input == decrypt(config.master,input)){
-                master = input
-                menu()
-            }
-        }catch(e){
-            term('wrong master password\n')
+        if(!validateMaster(input)){
+            term('Wrong master Password.')
             terminate()
         }
     })
@@ -111,7 +146,7 @@ function menu(){
     term.clear()
     term.moveTo(0,0)
     //term('').magenta('l').white('ist ').magenta('a').white('dd ').magenta('d').white('elete ').magenta('e').white('dit\n')
-    term('l: list x: listall a: add d: delete e: edit g: generate\n')
+    term('l: list k: listall f: find a: add d: delete e: edit g: generate c: config b: reset q: quit\n')
     enableMenu = true
 }
 
@@ -145,10 +180,11 @@ function edit(){
         return
     }
    term.singleColumnMenu(config.items.map(x=>x.alias),{y:1},(err,res)=>{
+        var item = config.items[res.selectedIndex]
         term('Alias: ')
-        term.inputField((err,alias)=>{
+        term.inputField({default: item.alias},(err,alias)=>{
             term('\nData: ')
-            term.inputField((err,data)=>{
+            term.inputField({default: decrypt(item.data,master)},(err,data)=>{
                 config.items[res.selectedIndex] = new Item(alias,data,master)
                 saveConfig()
                 menu()
@@ -169,14 +205,10 @@ function list(){
         
         menu()
         term.green(item.alias+'\n')
-        try{
-            var data = decrypt(item.data,master)
-            if(config.copyToClipboard)
-                clipboardy.writeSync(data)
-            term(data+'\n')
-        }catch(e){
-            term.red('wrong password\n')
-        }
+        var data = decrypt(item.data,master)
+        if(config.copyToClipboard)
+            clipboardy.writeSync(data)
+        term(data+'\n')
     });
 }
 
@@ -191,6 +223,56 @@ function listAll(){
         term.green(i.alias+'\n')
         term(decrypt(i.data,master)+'\n')                
     }
+}
+
+function find(inputDefault = ""){
+    if(config.items.length == 0){
+        menu()
+        term.red('nothing to find.')
+        return
+    }
+
+
+    var autoComplete = config.items.map(x=>x.alias).sort((x,y)=>{return x.length-y.length})
+    term.moveTo(0,2)
+    term.eraseDisplayBelow()
+    for(var a of autoComplete){
+        term(a+'\n')
+    }
+    term.moveTo(0,0)
+
+    var findInput = term.inputField({
+        default: inputDefault,
+        autoComplete: autoComplete,
+        autoCompleteMenu: true,
+        autoCompleteHint: true,
+        tokenHook: function( token , isEndOfInput , previousTokens , term , config ) {
+            term.moveTo(0,2)
+            term.eraseDisplayBelow()
+            var ac = this.autoComplete    
+            if(token.length > 0)
+                ac = ac.filter(x=>x.startsWith(token))
+
+            for(var a of ac){
+                term(a+'\n')
+            }
+            term.moveTo(0,0)
+        }
+    },(err,input)=>{
+        var item = config.items.find(x=>x.alias==input)
+        
+        if(!item){
+            term.clear()
+            find(input)
+        }else{
+            menu()
+            term.green(item.alias+'\n')
+            var data = decrypt(item.data,master)
+            if(config.copyToClipboard)
+                clipboardy.writeSync(data)
+            term(data+'\n')
+        }    
+    })
 }
 
 function remove(){
@@ -208,7 +290,22 @@ function remove(){
     });
 }
 
-checkMaster()
+
+if(process.argv[2]){
+    if(!validateMaster(process.argv[2])){
+        if(fs.existsSync(process.argv[2])){
+            if(!validateMaster(fs.readFileSync(process.argv[2]))){
+                term('Wrong keyfile.\n')
+                terminate()
+            }
+        }else{
+            term('Wrong master password\n')
+            terminate()
+        }
+    }
+}else{
+    inputMaster()
+}
 
 
 term.on( 'key' , function( name , matches , data ) {
@@ -226,10 +323,14 @@ term.on( 'key' , function( name , matches , data ) {
         case 'd': remove(); break;
         case 'a': add(); break;
         case 'e': edit(); break;
-        case 'x': listAll(); break;
+        case 'k': listAll(); break;
         case 'q': terminate(); break;
         case 'g': add(generatePassword(30)); break;
+        case 'b': resetConfig(); break;
+        case 'c': editConfig(); break;
+        case 'f': find(); break;
         default:
+        menu()
         break;
     }
 } ) ;
